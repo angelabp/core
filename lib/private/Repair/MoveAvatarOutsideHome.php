@@ -100,22 +100,24 @@ class MoveAvatarOutsideHome implements IRepairStep {
 	 * @param IOutput $out
 	 * @param IUser $user
 	 */
-	private function moveAvatars(IOutput $out, IUser $user) {
-		$userId = $user->getUID();
+	private function moveAvatars(IOutput $out, $userId) {
 
 		\OC\Files\Filesystem::initMountPoints($userId);
 
 		// call get instead of getUserFolder to avoid needless skeleton copy
 		try {
 			$oldAvatarUserFolder = $this->rootFolder->get('/' . $userId);
-			$oldAvatar = new Avatar($oldAvatarUserFolder, $this->l, $user, $this->logger);
-			if ($oldAvatar->exists()) {
-				$newAvatarsUserFolder = $this->avatarManager->getAvatarFolder($userId);
+			$user = $this->userManager->get($userId);
+			if ($user) {
+				$oldAvatar = new Avatar($oldAvatarUserFolder, $this->l, $user, $this->logger);
+				if ($oldAvatar->exists()) {
+					$newAvatarsUserFolder = $this->avatarManager->getAvatarFolder($userId);
 
-				// get original file
-				$oldAvatarFile = $oldAvatar->getFile(-1);
-				$oldAvatarFile->move($newAvatarsUserFolder->getPath() . '/' . $oldAvatarFile->getName());
-				$oldAvatar->remove();
+					// get original file
+					$oldAvatarFile = $oldAvatar->getFile(-1);
+					$oldAvatarFile->move($newAvatarsUserFolder->getPath() . '/' . $oldAvatarFile->getName());
+					$oldAvatar->remove();
+				}
 			}
 		} catch (NotFoundException $e) {
 			// not all users have a home, ignore
@@ -130,14 +132,14 @@ class MoveAvatarOutsideHome implements IRepairStep {
 	public function run(IOutput $output) {
 		$ocVersionFromBeforeUpdate = $this->config->getSystemValue('version', '0.0.0');
 		if (version_compare($ocVersionFromBeforeUpdate, '9.2.0.2', '<')) {
-			$function = function(IUser $user) use ($output) {
-				$this->moveAvatars($output, $user);
+			$function = function($userId) use ($output) {
+				$this->moveAvatars($output, $userId);
 				$output->advance();
 			};
 
-			$output->startProgress($this->userManager->countSeenUsers());
+			$output->startProgress($this->config->countUsersHavingUserValue('login', 'lastLogin'));
 
-			$this->userManager->callForSeenUsers($function);
+			$this->config->callForUsersHavingUserValue('login', 'lastLogin', $function);
 
 			$output->finishProgress();
 		}

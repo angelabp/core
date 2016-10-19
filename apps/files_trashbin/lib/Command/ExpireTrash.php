@@ -21,8 +21,7 @@
 
 namespace OCA\Files_Trashbin\Command;
 
-use OCP\IUser;
-use OCP\IUserManager;
+use OCP\IConfig;
 use OCA\Files_Trashbin\Expiration;
 use OCA\Files_Trashbin\Helper;
 use OCA\Files_Trashbin\Trashbin;
@@ -38,21 +37,21 @@ class ExpireTrash extends Command {
 	 * @var Expiration
 	 */
 	private $expiration;
-	
-	/**
-	 * @var IUserManager
-	 */
-	private $userManager;
 
 	/**
-	 * @param IUserManager|null $userManager
+	 * @var IConfig
+	 */
+	private $config;
+
+	/**
+	 * @param IConfig|null $userManager
 	 * @param Expiration|null $expiration
 	 */
-	public function __construct(IUserManager $userManager = null,
+	public function __construct(IConfig $config = null,
 								Expiration $expiration = null) {
 		parent::__construct();
 
-		$this->userManager = $userManager;
+		$this->config = $config;
 		$this->expiration = $expiration;
 	}
 
@@ -63,7 +62,7 @@ class ExpireTrash extends Command {
 			->addArgument(
 				'user_id',
 				InputArgument::OPTIONAL | InputArgument::IS_ARRAY,
-				'expires the trashbin of the given user(s), if no user is given the trash for all users will be expired'
+				'expires the trashbin of the given user(s), if no user is given the trash for all users that logged in once will be expired'
 			);
 	}
 
@@ -78,33 +77,35 @@ class ExpireTrash extends Command {
 		$users = $input->getArgument('user_id');
 		if (!empty($users)) {
 			foreach ($users as $user) {
-				if ($this->userManager->userExists($user)) {
-					$output->writeln("Remove deleted files of   <info>$user</info>");
-					$userObject = $this->userManager->get($user);
-					$this->expireTrashForUser($userObject);
+				$result = $this->expireTrashForUser($user);
+				if ($result) {
+					$output->writeln("Removed {$result[0]} deleted files / {$result[1]} bytes for <info>$user</info>");
 				} else {
-					$output->writeln("<error>Unknown user $user</error>");
+					$output->writeln("<error>Could not set up filesystem for $user</error>");
 				}
 			}
 		} else {
 			$p = new ProgressBar($output);
-			$p->start();
-			$this->userManager->callForSeenUsers(function(IUser $user) use ($p) {
+			$p->start($this->config->countUsersHavingUserValue('login', 'lastLogin'));
+			$this->config->callForUsersHavingUserValue('login', 'lastLogin', function($userId) use ($p) {
 				$p->advance();
-				$this->expireTrashForUser($user);
+				$this->expireTrashForUser($userId);
 			});
 			$p->finish();
 			$output->writeln('');
 		}
 	}
 
-	function expireTrashForUser(IUser $user) {
-		$uid = $user->getUID();
+	/**
+	 * @param $uid string
+	 * @return integer[]|false size of deleted files and number of deleted files
+	 */
+	function expireTrashForUser($uid) {
 		if (!$this->setupFS($uid)) {
-			return;
+			return false;
 		}
 		$dirContent = Helper::getTrashFiles('/', $uid, 'mtime');
-		Trashbin::deleteExpiredFiles($dirContent, $uid);
+		return Trashbin::deleteExpiredFiles($dirContent, $uid);
 	}
 
 	/**
